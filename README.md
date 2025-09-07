@@ -1,6 +1,6 @@
 # User Manual Chatbot
 
-A Flask-based chatbot that can analyze user manuals from PDFs or web pages and answer questions about them using OpenAI's GPT models.
+A Flask-based chatbot that can analyze user manuals (or other documents) from PDFs or web pages and answer questions about them using OpenAI's GPT models.
 
 ## Features
 
@@ -24,11 +24,10 @@ A Flask-based chatbot that can analyze user manuals from PDFs or web pages and a
    ```
 
 3. **Set up environment variables**
-   - Copy `.env.example` to `.env`
+   - Create your own `.env` file
    - Fill in your actual values:
      ```
      OPENAI_API_KEY=your_actual_openai_api_key
-     FLASK_SECRET_KEY=your_flask_secret_key
      TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe
      POPPLER_PATH=C:/path/to/your/poppler/bin
      ```
@@ -44,16 +43,10 @@ A Flask-based chatbot that can analyze user manuals from PDFs or web pages and a
 
 ## Usage
 
-1. Open your browser and go to `http://localhost:5000`
+1. Open your browser and go to `http://localhost:5000` for Flask
 2. Upload a PDF user manual or provide a webpage URL
-3. Wait for the system to process and generate FAQs
-4. Start asking questions about the manual content
-
-## Security Notes
-
-- Never commit your `.env` file to version control
-- Keep your OpenAI API key secure and don't share it publicly
-- The `.env` file is already included in `.gitignore` for your protection
+3. Wait for the system to process and generate FAQs (takes a while)
+4. Start asking questions about the manual content and interact with follow up questions
 
 ## Requirements
 
