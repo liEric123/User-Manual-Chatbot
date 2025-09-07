@@ -54,7 +54,6 @@ def index():
 @app.route('/ask', methods=['POST'])
 def ask():
     try:
-        global user_manual_text
         user_query = request.form['query']
         print(f"Received user query: {user_query}")
 
@@ -183,7 +182,6 @@ def generate_prompt_with_history(conversation_history):
     Returns:
         list: The list of message dictionaries representing the conversation.
     """
-    global user_manual_text
     messages = [{"role": "system", "content": "You are an expert at understanding user manuals and providing clear and concise answers. Refuse to answer anything not in the User Manual Text and only let the user ask about the User Manual"}]
     messages.extend(conversation_history)
     messages.append({"role": "user", "content": f"Here is the User Manual Text to refer to:\n{user_manual_text}"})
@@ -199,7 +197,6 @@ def bold_asterisk_words(text):
     Returns:
         str: The processed text with HTML <strong> tags.
     """
-    import re
     bold_pattern = re.compile(r'\*\*(.*?)\*\*')
 
     def replace_bold(match):
@@ -229,7 +226,6 @@ def get_pdf_page_count(pdf_file):
 @app.route('/generate_faqs', methods=['POST'])
 def generate_faqs():
     try:
-        global user_manual_text
         print("Received request to generate FAQs")
         if 'pdf' not in request.files:
             return jsonify({'error': 'No PDF file provided'}), 400
@@ -246,7 +242,7 @@ def generate_faqs():
             os.remove(pdf_path)
             return jsonify({'error': f'The uploaded PDF cannot exceed {MAX_ALLOWED_PAGES} pages.'}), 400
 
-        user_manual_text, images = extract_text_and_images_from_pdf(pdf_path)
+        user_manual_text, _ = extract_text_and_images_from_pdf(pdf_path)
         os.remove(pdf_path)
 
         faqs = generate_faqs_from_text(user_manual_text)
@@ -260,7 +256,6 @@ def generate_faqs():
 @app.route('/generate_follow_up_questions', methods=['POST'])
 def generate_follow_up_questions():
     try:
-        global user_manual_text
         content = request.json.get('content')
         if not content:
             return jsonify({'error': 'Content is required to generate follow-up questions'}), 400
@@ -278,7 +273,6 @@ def generate_follow_up_questions():
 @app.route('/generate_faqsforlink', methods=['POST'])
 def generate_faqsforlink():
     try:
-        global user_manual_text
         webpage_url = request.form.get('webpage')
         if not webpage_url:
             return jsonify({'error': 'No webpage URL provided'}), 400
@@ -455,7 +449,7 @@ def generate_faqs_from_text(pdf_text):
         json_object = json.dumps(faqs, indent=4)
  
         # Writing to faqs.json
-        with open("static/faqs.json", "w") as outfile:
+        with open("static/faqs.json", "w", encoding="utf-8") as outfile:
             outfile.write(json_object)
 
         return faqs
