@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Manual Chatbot</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=ABeeZee&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>User Manual Chatbot</h1>
+        <form id="query-form">
+            <label for="pdf">Upload PDF (Less than 25 pages):</label>
+            <input type="file" id="pdf" name="pdf" accept="application/pdf" required>    
+        </form>
+        <div class="link-container">
+            <label for="webpage">Enter Webpage URL:</label>
+            <input type="text" id="webpage" name="webpage" required>
+            <button id="link-submit" type="button">Generate FAQs</button>
+        </div>
+        <div class="loading" id="pdf-loading-message" style="display:none;">
+            <img src="/static/images/loading.gif" alt="Loading...">
+            <p>Loading, Processing PDF...</p>
+        </div>
+
+    </div>
+    <script src="/static/js/scripts.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Manual Chatbot</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=ABeeZee&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>User Manual Chatbot</h1>
+        <button id="back-to-upload-btn">Upload a Different File</button>
+        <div id="chat-history-container">
+            <h2 class="chat-history-title"><strong>Chat History:</strong></h2>
+            <button id="clear-history-btn">Clear History</button>
+            <div id="conversation-history" class="conversation-history"></div>
+            <div id="follow-up-faqs" class="follow-up-faqs"></div>
+        </div>
+        <form id="query-form">
+            <div class="question-container">
+                <label for="query">Type your question here:</label>
+                <input type="text" id="query" name="query" required>
+                <span class="or-text">or</span>
+                <select id="faq-dropdown">
+                    <option value="">Select an FAQ</option>
+                    <!-- Placeholder for FAQs loaded dynamically -->
+                </select>
+
+            </div>
+            <button type="submit">Ask</button>
+            <div class="loading" id="loading-message">ANSWERS LOADING...</div>
+        </form>
+        <div id="response-container">
+            <div id="response-text">
+                <div id="chatbot-response"></div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/scripts.js"></script>
+</body>
+</html>

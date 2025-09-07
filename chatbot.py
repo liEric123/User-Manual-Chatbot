@@ -1,0 +1,496 @@
+import openai
+import json
+import PyPDF2
+from dotenv import load_dotenv, find_dotenv
+from pdf2image import convert_from_path
+from PIL import Image
+import pytesseract
+import os
+import secrets
+from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify, render_template, session
+from flask_cors import CORS
+import re
+from io import BytesIO
+from urllib.parse import urljoin
+import cloudscraper
+
+# Load the .env file
+load_dotenv(find_dotenv())
+
+# Initialize OpenAI client with your API key
+openai.api_key = os.getenv("OPENAI_API_KEY")  # This will fetch the API key from your .env file
+
+# Set Flask secret key
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))  # Set the secret key
+CORS(app)
+
+# GPT model settings
+model = "gpt-4o"  # Updated to a supported model
+temperature = 0.3
+max_tokens = 600
+
+# Explicitly set the Tesseract executable path
+pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_CMD", r'C:/Program Files/Tesseract-OCR/tesseract.exe')
+
+# Set Poppler path
+poppler_path = os.getenv("POPPLER_PATH")
+
+# Maximum allowed pages in the PDF
+MAX_ALLOWED_PAGES = 25
+
+user_manual_text = ""
+
+
+@app.route('/')
+def upload_pdf():
+    return render_template('upload_pdf.html')
+        
+@app.route('/index.html')
+def index():
+    return render_template('index.html')
+
+@app.route('/ask', methods=['POST'])
+def ask():
+    try:
+        global user_manual_text
+        user_query = request.form['query']
+        print(f"Received user query: {user_query}")
+
+        # Load conversation history from session
+        conversation_history = session.get('conversation_history', [])
+
+        # Append the new user query to the conversation history
+        conversation_history.append({"role": "user", "content": user_query})
+
+        # Generate the complete prompt including conversation history and manual text
+        prompt = generate_prompt_with_history(conversation_history)
+        # Get response from ChatGPT
+        print(f"PROMPT IS: {prompt}")
+
+        chat_response = ask_chatgpt(prompt)
+
+        # Append the ChatGPT response to the conversation history
+        conversation_history.append({"role": "assistant", "content": chat_response})
+
+        # Save the updated conversation history to the session
+        session['conversation_history'] = conversation_history
+
+        return jsonify({'response': chat_response})
+    except Exception as e:
+        print(f"Error in /ask route: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/conversation_history', methods=['GET', 'POST'])
+def conversation_history():
+    if request.method == 'POST':
+        try:
+            data = request.json
+            role = data.get('role')
+            content = data.get('content')
+
+            if not role or not content:
+                return jsonify({'error': 'Invalid data'}), 400
+
+            conversation_history = session.get('conversation_history', [])
+            conversation_history.append({"role": role, "content": content})
+            session['conversation_history'] = conversation_history
+
+            return jsonify({'message': 'Conversation history updated successfully'}), 200
+        except Exception as e:
+            print(f"Error updating conversation history: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    # For GET requests
+    if 'conversation_history' in session:
+        return jsonify(session['conversation_history'])
+    return jsonify([])
+
+def extract_text_and_images_from_pdf(pdf_file):
+    """
+    Extract text and images from a PDF file.
+
+    Args:
+        pdf_file (str): Path to the PDF file.
+
+    Returns:
+        tuple: Extracted text (str) and list of PIL.Image objects (if available).
+    """
+    text = ""
+    images = []
+
+    try:
+        with open(pdf_file, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            num_pages = len(pdf_reader.pages)
+            if num_pages > MAX_ALLOWED_PAGES:
+                raise ValueError(f"The uploaded PDF cannot exceed {MAX_ALLOWED_PAGES} pages.")
+
+            for page_num in range(num_pages):
+                page = pdf_reader.pages[page_num]
+                text += page.extract_text()
+
+            # Convert PDF pages to images
+            pages_as_images = convert_from_path(pdf_file, poppler_path=poppler_path)
+            images.extend(pages_as_images)
+
+            # Extract text from images using OCR (pytesseract)
+            for img in images:
+                img_text = pytesseract.image_to_string(img)
+                text += "\n" + img_text
+
+    except Exception as e:
+        print(f"Error extracting text and images: {e}")
+
+    return text, images
+
+def ask_chatgpt(messages):
+    """
+    Get a response from ChatGPT based on the given prompt.
+
+    Args:
+        messages (list): List of message dictionaries representing the conversation.
+
+    Returns:
+        str: The response generated by ChatGPT.
+    """
+    try:
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        # Extract and format bold words
+        chat_response = response['choices'][0]['message']['content']
+        formatted_response = bold_asterisk_words(chat_response)
+
+        return formatted_response
+    except Exception as e:
+        print(f"Error in ask_chatgpt function: {e}")
+        return f"Error: {e}"
+
+def generate_prompt_with_history(conversation_history):
+    """
+    Generate a prompt including the conversation history.
+
+    Args:
+        user_manual_text (str): The extracted text from the user manual.
+        conversation_history (list): The conversation history.
+
+    Returns:
+        list: The list of message dictionaries representing the conversation.
+    """
+    global user_manual_text
+    messages = [{"role": "system", "content": "You are an expert at understanding user manuals and providing clear and concise answers. Refuse to answer anything not in the User Manual Text and only let the user ask about the User Manual"}]
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": f"Here is the User Manual Text to refer to:\n{user_manual_text}"})
+    return messages
+
+def bold_asterisk_words(text):
+    """
+    Convert words wrapped in **word** into <strong>word</strong> for bold formatting.
+
+    Args:
+        text (str): The text to process.
+
+    Returns:
+        str: The processed text with HTML <strong> tags.
+    """
+    import re
+    bold_pattern = re.compile(r'\*\*(.*?)\*\*')
+
+    def replace_bold(match):
+        return f"<strong>{match.group(1)}</strong>"
+
+    return bold_pattern.sub(replace_bold, text)
+
+def get_pdf_page_count(pdf_file):
+    """
+    Get the number of pages in a PDF file.
+
+    Args:
+        pdf_file (str): Path to the PDF file.
+
+    Returns:
+        int: Number of pages in the PDF.
+    """
+    try:
+        with open(pdf_file, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            num_pages = len(pdf_reader.pages)
+        return num_pages
+    except Exception as e:
+        print(f"Error getting PDF page count: {e}")
+        return 0
+        
+@app.route('/generate_faqs', methods=['POST'])
+def generate_faqs():
+    try:
+        global user_manual_text
+        print("Received request to generate FAQs")
+        if 'pdf' not in request.files:
+            return jsonify({'error': 'No PDF file provided'}), 400
+        file = request.files['pdf']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        pdf_path = os.path.join('uploads', file.filename)
+        file.save(pdf_path)
+        print(f"Saved PDF to {pdf_path}")
+
+        num_pages = get_pdf_page_count(pdf_path)
+        if num_pages > MAX_ALLOWED_PAGES:
+            os.remove(pdf_path)
+            return jsonify({'error': f'The uploaded PDF cannot exceed {MAX_ALLOWED_PAGES} pages.'}), 400
+
+        user_manual_text, images = extract_text_and_images_from_pdf(pdf_path)
+        os.remove(pdf_path)
+
+        faqs = generate_faqs_from_text(user_manual_text)
+        print(f"Generated FAQs: {faqs}")
+
+        return jsonify({'response': faqs})
+    except Exception as e:
+        print(f"Error in /generate_faqs route: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/generate_follow_up_questions', methods=['POST'])
+def generate_follow_up_questions():
+    try:
+        global user_manual_text
+        content = request.json.get('content')
+        if not content:
+            return jsonify({'error': 'Content is required to generate follow-up questions'}), 400
+
+        combined_content = f"{content} Now that was the content and here is the user manual: {user_manual_text}"
+        #print(f"Reassuring umt: {user_manual_text}")
+        #print(f"Printing combo content: {combined_content}")
+        follow_up_questions = generate_questions_based_on_content(combined_content)
+
+        return jsonify({'follow_up_questions': follow_up_questions})
+    except Exception as e:
+        print(f"Error in /generate_follow_up_questions route: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/generate_faqsforlink', methods=['POST'])
+def generate_faqsforlink():
+    try:
+        global user_manual_text
+        webpage_url = request.form.get('webpage')
+        if not webpage_url:
+            return jsonify({'error': 'No webpage URL provided'}), 400
+
+        # Scrape webpage content
+        user_manual_text = scrape_webpage(webpage_url)
+        if not user_manual_text:
+            return jsonify({'error': 'Failed to scrape webpage content'}), 500
+        print(user_manual_text)
+        faqs = generate_faqs_from_text(user_manual_text)
+
+        return jsonify({'response': faqs})
+    except Exception as e:
+        print(f"Error in /generate_faqsforlink route: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def scrape_webpage(url):
+    """
+    Scrape main content from a webpage using BeautifulSoup and cloudscraper, including text from images.
+
+    Args:
+        url (str): URL of the webpage.
+
+    Returns:
+        str: Extracted main content from the webpage.    
+    """
+    try:
+        scraper = cloudscraper.create_scraper(
+            browser={
+            'custom': 'ScraperBot/1.0',
+            }
+        )
+        response = scraper.get(url)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            # List of possible div classes that contain main content
+            main_content_classes = ['article__content', 'article-content', 'article-body  ', ' ']
+            content_elements = None
+            
+            for class_name in main_content_classes:
+                content_elements = soup.find('div', class_=class_name)
+                if content_elements:
+                    break
+            
+            if not content_elements:
+                content_elements = soup.find_all(['p', 'img'])  # Fallback to paragraphs and images if no main div found
+            else:
+                content_elements = content_elements.find_all(['p', 'img'])
+
+            text_content = []
+
+            for element in content_elements:
+                if element.name == 'p':
+                    text_content.append(element.get_text(separator=' '))
+                elif element.name == 'img':
+                    img_url = element.get('src')
+                    if img_url:
+                        img_url = urljoin(url, img_url)  # Convert relative URL to absolute URL
+                        img_response = scraper.get(img_url)
+                        if img_response.status_code == 200:
+                            img_data = Image.open(BytesIO(img_response.content))
+                            img_text = pytesseract.image_to_string(img_data)
+                            if img_text.strip():
+                                text_content.append(f'[Image Text]: {img_text}')
+
+            # Join all parts into a single string with newlines separating elements
+            text_content = '\n\n'.join(text_content)
+            text_content = re.sub(r'\n\s*\n', '\n\n', text_content.strip())  # Clean up extra newlines
+            text_content = re.sub(r'\n+', '\n', text_content)  # Normalize excessive newlines
+            return text_content
+        else:
+            print(f"Failed to fetch webpage content. Status code: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Error scraping webpage: {e}")
+        return None
+
+@app.route('/clear_conversation_history', methods=['POST'])
+def clear_conversation_history():
+    session.pop('conversation_history', None)  # Remove conversation history from session
+    return jsonify({'status': 'success'})
+
+def generate_questions_based_on_content(content):
+    """
+    Generate follow-up questions based on the given content.
+
+    Args:
+        content (str): The previous chatbot response.
+
+    Returns:
+        list: A list of follow-up questions.
+    """
+    try:
+        # Define the prompt for generating follow-up questions
+        prompt = f"Based on the following response if possible, generate three follow-up questions that can be answered by the user manual that a user might ask potentially. Do not generate anything not explicitly answerable by the user manual text. Also do not generate the answers.:\n\nResponse: {content}\n\nFollow-up Questions:"
+        print(f"Printing prompt: {prompt}")
+
+        # Get response from ChatGPT
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are an expert at generating follow-up questions based on previous responses and user manuals."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        # Extract and format the response
+        chat_response = response['choices'][0]['message']['content']
+        
+        # Parse the response into a list of follow-up questions
+        follow_up_questions = parse_follow_up_questions(chat_response)
+
+        return follow_up_questions
+    except Exception as e:
+        print(f"Error in generate_questions_based_on_content function: {e}")
+        return []
+
+def parse_follow_up_questions(chat_response):
+    """
+    Parse the ChatGPT response into a list of follow-up questions.
+
+    Args:
+        chat_response (str): The response generated by ChatGPT.
+
+    Returns:
+        list: A list of follow-up questions.
+    """
+    questions = []
+    lines = chat_response.split("\n")
+    
+    for line in lines:
+        line = line.strip()
+        # Remove leading numbers and any punctuation
+        line = re.sub(r'^\d+[\.\)]\s*|^A:\s*', '', line)
+        if line:
+            questions.append(line)
+
+    return questions
+
+def generate_faqs_from_text(pdf_text):
+    """
+    Generate FAQs and their answers from the extracted PDF text using ChatGPT.
+
+    Args:
+        pdf_text (str): The extracted text from the PDF.
+
+    Returns:
+        list: A list of dictionaries containing FAQs with questions and answers.
+    """
+    try:
+        # Define the prompt for generating FAQs and their answers
+        prompt = f"The following text is extracted from a user manual. Generate a list of the 10 most important FAQs with questions and answers:\n\n{pdf_text}"
+
+        # Get response from ChatGPT
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are an expert at creating FAQs that a user might ask from user manuals."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        # Extract and format the response
+        chat_response = response['choices'][0]['message']['content']
+        
+        # Parse the response into a list of FAQs with answers
+        faqs = parse_faqs_with_answers(chat_response)
+        json_object = json.dumps(faqs, indent=4)
+ 
+        # Writing to faqs.json
+        with open("static/faqs.json", "w") as outfile:
+            outfile.write(json_object)
+
+        return faqs
+    except Exception as e:
+        print(f"Error in generate_faqs_from_text function: {e}")
+        return []
+
+def parse_faqs_with_answers(chat_response):
+    """
+    Parse the ChatGPT response into a list of FAQs with answers.
+
+    Args:
+        chat_response (str): The response generated by ChatGPT.
+
+    Returns:
+        list: A list of dictionaries containing FAQs with questions and answers.
+    """
+    faqs = []
+    lines = chat_response.split("\n")
+    current_faq = {}
+
+    for line in lines:
+        if line.strip().startswith(tuple(f"{i}." for i in range(1, 100))):
+            if current_faq:
+                faqs.append(current_faq)
+            question = line.strip().split(".", 1)[1].strip()
+            current_faq = {"question": question, "answer": ""}
+        elif current_faq and line.strip():
+            current_faq["answer"] += line.strip() + " "
+    
+    if current_faq:
+        faqs.append(current_faq)
+    
+    return faqs
+
+if __name__ == "__main__":
+    os.makedirs('uploads', exist_ok=True)  # Create the uploads directory if it doesn't exist
+    app.run(debug=True)
